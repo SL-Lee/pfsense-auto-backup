@@ -1,1 +1,3 @@
-/target
+Backups/
+target/
+.env
