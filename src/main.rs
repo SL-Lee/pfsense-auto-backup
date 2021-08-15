@@ -1,10 +1,18 @@
 use std::{
-    fs,
+    env,
+    fs::{self, File},
     io::{self, Write},
+    path::Path,
     sync::Arc,
+    time::Duration,
 };
 
+use argon2::{
+    password_hash::{PasswordHasher, SaltString},
+    Argon2,
+};
 use dotenv::dotenv;
+use rand::rngs::OsRng;
 
 use pfsense_auto_backup::{
     download_backup_config, login, restore_backup_config, schedule_backups,
@@ -18,9 +26,28 @@ fn main() {
             .danger_accept_invalid_certs(true)
             .cookie_store(true)
             .cookie_provider(Arc::new(reqwest::cookie::Jar::default()))
+            .timeout(Duration::from_secs(300))
             .build()
             .expect("Unable to build reqwest client."),
     );
+
+    let encryption_passphrase = env::var("ENCRYPTION_PASSPHRASE")
+        .expect("'ENCRYPTION_PASSPHRASE' environment variable is not set.");
+    let encryption_passphrase_bytes = encryption_passphrase.as_bytes();
+
+    if !Path::new(r".kek-info").exists() {
+        let password_hash = Argon2::default()
+            .hash_password_simple(
+                encryption_passphrase_bytes,
+                SaltString::generate(&mut OsRng).as_ref(),
+            )
+            .unwrap()
+            .to_string();
+        File::create(".kek-info")
+            .unwrap()
+            .write_all(password_hash.as_bytes())
+            .unwrap();
+    }
 
     while let Err(error) = login(client.clone()) {
         println!("{}", error);
@@ -129,10 +156,18 @@ fn main() {
                         Prints this help message."
                 ),
                 Some(filename) => {
-                    match restore_backup_config(client.clone(), filename) {
+                    match restore_backup_config(client, filename) {
                         Ok(msg) => println!("{}", msg),
                         Err(error) => println!("{}", error),
                     }
+
+                    println!(
+                        "After restoring a config file, pfSense should reboot \
+                        shortly after. This tool will now exit; ONLY start up \
+                        this tool again once pfSense has finished booting up \
+                        (and finished installing all packages, if any)."
+                    );
+                    break;
                 }
                 None => println!(
                     "Please specify a restore subcommand. For a list of \

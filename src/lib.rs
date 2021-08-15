@@ -1,9 +1,19 @@
+mod encryption;
+
 use std::{
-    env, fs::create_dir, path::Path, str::FromStr, sync::Arc, time::Duration,
+    env,
+    fs::{create_dir, File},
+    io::Write,
+    path::Path,
+    str::FromStr,
+    sync::Arc,
+    time::Duration,
 };
 
 use clokwerk::{ScheduleHandle, Scheduler, TimeUnits};
 use regex::Regex;
+
+use encryption::{generate_encryption_key, retrieve_encryption_key};
 
 const PFSENSE_LOGIN_PAGE_URL: &str = "https://192.168.1.10/";
 const PFSENSE_BACKUP_PAGE_URL: &str = "https://192.168.1.10/diag_backup.php";
@@ -64,7 +74,7 @@ pub fn schedule_backups(
         u32::from_str(captures.name("quantity").unwrap().as_str()).unwrap();
     let interval = match captures.name("unit").unwrap().as_str() {
         "min" => quantity.minutes(),
-        "h" => quantity.hours(),
+        "hr" => quantity.hours(),
         "d" => quantity.days(),
         "wk" => quantity.weeks(),
         _ => unreachable!(),
@@ -80,14 +90,15 @@ pub fn download_backup_config(
     client: Arc<reqwest::blocking::Client>,
 ) -> Result<String, String> {
     let csrf_token = get_csrf_token(client.clone(), PFSENSE_BACKUP_PAGE_URL);
+    let (encryption_key, encryption_key_metadata) = generate_encryption_key();
     let form = reqwest::blocking::multipart::Form::new()
         .text("__csrf_magic", csrf_token)
         .text("backuparea", "")
         .text("donotbackuprrd", "yes")
         .text("backupdata", "yes")
         .text("encrypt", "yes")
-        .text("encrypt_password", "ok")
-        .text("encrypt_password_confirm", "ok")
+        .text("encrypt_password", encryption_key.clone())
+        .text("encrypt_password_confirm", encryption_key)
         .text("download", "Download configuration as XML")
         .text("restorearea", "")
         .part(
@@ -123,8 +134,15 @@ pub fn download_backup_config(
     }
 
     let mut backup_file =
-        std::fs::File::create(format!("Backups\\{}", filename)).unwrap();
-
+        File::create(format!(r"Backups\{}", filename)).unwrap();
+    File::create(format!(r"Backups\{}.metadata", filename))
+        .unwrap()
+        .write_all(
+            serde_json::to_string(&encryption_key_metadata)
+                .unwrap()
+                .as_bytes(),
+        )
+        .unwrap();
     response
         .copy_to(&mut backup_file)
         .map(|_| "Config file backed up successfully.".to_string())
@@ -136,6 +154,8 @@ pub fn restore_backup_config(
     filename: &str,
 ) -> Result<String, String> {
     let csrf_token = get_csrf_token(client.clone(), PFSENSE_BACKUP_PAGE_URL);
+    let encryption_key =
+        retrieve_encryption_key(&format!(r"Backups\{}.metadata", filename))?;
     let form = reqwest::blocking::multipart::Form::new()
         .text("__csrf_magic", csrf_token)
         .text("backuparea", "")
@@ -154,17 +174,21 @@ pub fn restore_backup_config(
             },
         )
         .text("decrypt", "yes")
-        .text("decrypt_password", "ok")
+        .text("decrypt_password", encryption_key)
         .text("restore", "Restore Configuration");
-    let response = client
-        .post(PFSENSE_BACKUP_PAGE_URL)
-        .multipart(form)
-        .send()
-        .unwrap();
 
-    if response.status().is_success() {
-        Ok("Config file restored successfully.".to_string())
-    } else {
-        Err("Unable to restore config file.".to_string())
+    match client.post(PFSENSE_BACKUP_PAGE_URL).multipart(form).send() {
+        Ok(response) if response.status().is_success() => {
+            Ok("Config file restored successfully.".to_string())
+        }
+        Err(error) if error.is_timeout() => {
+            Err("Request timed out while trying to restore the config file."
+                .to_string())
+        }
+        _ => Err(
+            "An unknown error occurred while trying to restore the config \
+            file."
+                .to_string(),
+        ),
     }
 }
