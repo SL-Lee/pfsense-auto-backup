@@ -53,7 +53,7 @@ fn main() {
             ),
             "exit" | "quit" => break,
             "" => {}
-            unrecognized_command @ _ => println!(
+            unrecognized_command => println!(
                 "Unrecognized command '{}'. For a list of available commands, \
                 run `help`.",
                 unrecognized_command

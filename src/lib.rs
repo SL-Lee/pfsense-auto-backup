@@ -2,9 +2,8 @@ use std::{env, fs::create_dir, path::Path};
 
 use regex::Regex;
 
-const PFSENSE_LOGIN_PAGE_URL: &'static str = "https://192.168.1.10/";
-const PFSENSE_BACKUP_PAGE_URL: &'static str =
-    "https://192.168.1.10/diag_backup.php";
+const PFSENSE_LOGIN_PAGE_URL: &str = "https://192.168.1.10/";
+const PFSENSE_BACKUP_PAGE_URL: &str = "https://192.168.1.10/diag_backup.php";
 
 fn get_csrf_token(client: &reqwest::blocking::Client, url: &str) -> String {
     let response = client.get(url).send().expect("Unable to load page.");
@@ -20,7 +19,7 @@ fn get_csrf_token(client: &reqwest::blocking::Client, url: &str) -> String {
 }
 
 pub fn login(client: &reqwest::blocking::Client) {
-    let csrf_token = get_csrf_token(&client, PFSENSE_LOGIN_PAGE_URL);
+    let csrf_token = get_csrf_token(client, PFSENSE_LOGIN_PAGE_URL);
     let pfsense_username = env::var("PFSENSE_USERNAME")
         .expect("'PFSENSE_USERNAME' environment variable is not set.");
     let pfsense_password = env::var("PFSENSE_PASSWORD")
@@ -44,7 +43,7 @@ pub fn login(client: &reqwest::blocking::Client) {
 }
 
 pub fn download_backup_config(client: &reqwest::blocking::Client) {
-    let csrf_token = get_csrf_token(&client, PFSENSE_BACKUP_PAGE_URL);
+    let csrf_token = get_csrf_token(client, PFSENSE_BACKUP_PAGE_URL);
     let form = reqwest::blocking::multipart::Form::new()
         .text("__csrf_magic", csrf_token)
         .text("backuparea", "")
@@ -97,7 +96,7 @@ pub fn download_backup_config(client: &reqwest::blocking::Client) {
 }
 
 pub fn restore_backup_config(client: &reqwest::blocking::Client) {
-    let csrf_token = get_csrf_token(&client, PFSENSE_BACKUP_PAGE_URL);
+    let csrf_token = get_csrf_token(client, PFSENSE_BACKUP_PAGE_URL);
     let form = reqwest::blocking::multipart::Form::new()
         .text("__csrf_magic", csrf_token)
         .text("backuparea", "")
