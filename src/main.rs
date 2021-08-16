@@ -102,18 +102,16 @@ fn main() {
                 Some(&"list") => match fs::read_dir(r".\Backups\") {
                     Ok(dir_entries) => {
                         for dir_entry in dir_entries {
-                            println!(
-                                "{}",
-                                dir_entry
-                                    .unwrap()
-                                    .path()
-                                    .components()
-                                    .last()
-                                    .unwrap()
-                                    .as_os_str()
-                                    .to_os_string()
-                                    .to_string_lossy()
-                            );
+                            let filename = dir_entry
+                                .unwrap()
+                                .file_name()
+                                .to_str()
+                                .unwrap()
+                                .to_string();
+
+                            if filename.ends_with(".xml") {
+                                println!("{}", filename);
+                            }
                         }
                     }
                     Err(error) => println!("{}", error.to_string()),
