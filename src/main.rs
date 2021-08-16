@@ -15,7 +15,8 @@ use dotenv::dotenv;
 use rand::rngs::OsRng;
 
 use pfsense_auto_backup::{
-    download_backup_config, login, restore_backup_config, schedule_backups,
+    download_backup_config, encryption::KekInfo, login, restore_backup_config,
+    schedule_backups,
 };
 
 fn main() {
@@ -36,16 +37,29 @@ fn main() {
     let encryption_passphrase_bytes = encryption_passphrase.as_bytes();
 
     if !Path::new(r".kek-info").exists() {
-        let password_hash = Argon2::default()
+        let argon2 = Argon2::default();
+        let kek_salt = SaltString::generate(&mut OsRng);
+        let kek_hash = argon2
             .hash_password_simple(
-                encryption_passphrase_bytes,
+                argon2
+                    .hash_password_simple(
+                        encryption_passphrase_bytes,
+                        kek_salt.as_ref(),
+                    )
+                    .unwrap()
+                    .to_string()
+                    .as_bytes(),
                 SaltString::generate(&mut OsRng).as_ref(),
             )
             .unwrap()
             .to_string();
+        let kek_info = KekInfo {
+            salt: kek_salt.as_str().to_string(),
+            hash: kek_hash,
+        };
         File::create(".kek-info")
             .unwrap()
-            .write_all(password_hash.as_bytes())
+            .write_all(serde_json::to_string(&kek_info).unwrap().as_bytes())
             .unwrap();
     }
 
@@ -108,7 +122,7 @@ fn main() {
                     Some(&"help") => println!(
                         "backup delete <filename>\n    \
                             Delete the specified backup file.\n\
-                            backup delete help\n    \
+                        backup delete help\n    \
                             Prints this help message."
                     ),
                     Some(filename) => {

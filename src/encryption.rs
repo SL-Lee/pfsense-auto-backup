@@ -2,8 +2,8 @@ use std::{env, fs};
 
 use aes::Aes256;
 use argon2::{
-    password_hash::{PasswordHash, PasswordVerifier},
-    Argon2,
+    password_hash::{PasswordHash, PasswordVerifier, SaltString},
+    Argon2, PasswordHasher,
 };
 use block_modes::{block_padding::Pkcs7, BlockMode, Cbc};
 use rand::Rng;
@@ -15,6 +15,12 @@ type Aes256Cbc = Cbc<Aes256, Pkcs7>;
 pub struct EncryptionKeyMetadata {
     iv: [u8; 16],
     encrypted_key: Vec<u8>,
+}
+
+#[derive(Deserialize, Serialize)]
+pub struct KekInfo {
+    pub salt: String,
+    pub hash: String,
 }
 
 pub fn generate_encryption_key() -> (String, EncryptionKeyMetadata) {
@@ -67,17 +73,36 @@ pub fn retrieve_key_encryption_key() -> Result<Vec<u8>, String> {
         .expect("'ENCRYPTION_PASSPHRASE' environment variable is not set.");
     let encryption_passphrase_bytes = encryption_passphrase.as_bytes();
 
-    let kek_info = fs::read_to_string(".kek-info").unwrap();
-    let parsed_hash = PasswordHash::new(&kek_info).expect(
+    let kek_info = match serde_json::from_str::<KekInfo>(
+        match &fs::read_to_string(".kek-info") {
+            Ok(file_contents) => file_contents,
+            Err(error) => return Err(error.to_string()),
+        },
+    ) {
+        Ok(kek_info) => kek_info,
+        Err(_) => return Err(
+            "The .kek-info file seems to be invalid. Try removing the file and \
+            restarting the application to fix this."
+                .to_string(),
+        ),
+    };
+
+    let argon2 = Argon2::default();
+    let kek_salt = SaltString::new(&kek_info.salt).unwrap();
+    let kek = argon2
+        .hash_password_simple(encryption_passphrase_bytes, kek_salt.as_ref())
+        .unwrap();
+
+    let parsed_hash = PasswordHash::new(&kek_info.hash).expect(
         "The .kek-info file seems to be invalid. Try removing the file and \
         restarting the application to fix this.",
     );
 
-    if Argon2::default()
-        .verify_password(encryption_passphrase_bytes, &parsed_hash)
+    if argon2
+        .verify_password(kek.to_string().as_bytes(), &parsed_hash)
         .is_ok()
     {
-        Ok(parsed_hash.hash.unwrap().as_bytes().to_vec())
+        Ok(kek.hash.unwrap().as_bytes().to_vec())
     } else {
         Err("Unable to retrieve key encryption key.".to_string())
     }
