@@ -109,7 +109,13 @@ fn main() {
                                 .unwrap()
                                 .to_string();
 
-                            if filename.ends_with(".xml") {
+                            if filename.ends_with(".xml")
+                                && Path::new(&format!(
+                                    r"Backups\{}.metadata",
+                                    filename
+                                ))
+                                .exists()
+                            {
                                 println!("{}", filename);
                             }
                         }
