@@ -15,8 +15,13 @@ use regex::Regex;
 
 use encryption::{generate_encryption_key, retrieve_encryption_key};
 
-const PFSENSE_LOGIN_PAGE_URL: &str = "https://192.168.1.10/";
-const PFSENSE_BACKUP_PAGE_URL: &str = "https://192.168.1.10/diag_backup.php";
+const PFSENSE_LOGIN_PAGE_PATH: &str = "/";
+const PFSENSE_BACKUP_PAGE_PATH: &str = "/diag_backup.php";
+
+pub fn get_pfsense_domain() -> String {
+    env::var("PFSENSE_DOMAIN")
+        .expect("'PFSENSE_DOMAIN' environment variable is not set.")
+}
 
 fn get_csrf_token(client: Arc<reqwest::blocking::Client>, url: &str) -> String {
     let response = client.get(url).send().expect("Unable to load page.");
@@ -32,7 +37,10 @@ fn get_csrf_token(client: Arc<reqwest::blocking::Client>, url: &str) -> String {
 }
 
 pub fn login(client: Arc<reqwest::blocking::Client>) -> Result<String, String> {
-    let csrf_token = get_csrf_token(client.clone(), PFSENSE_LOGIN_PAGE_URL);
+    let csrf_token = get_csrf_token(
+        client.clone(),
+        &format!("{}{}", get_pfsense_domain(), PFSENSE_LOGIN_PAGE_PATH),
+    );
     let pfsense_username = env::var("PFSENSE_USERNAME")
         .expect("'PFSENSE_USERNAME' environment variable is not set.");
     let pfsense_password = env::var("PFSENSE_PASSWORD")
@@ -43,7 +51,15 @@ pub fn login(client: Arc<reqwest::blocking::Client>) -> Result<String, String> {
         .text("passwordfld", pfsense_password)
         .text("login", "Sign+In");
 
-    match client.post(PFSENSE_LOGIN_PAGE_URL).multipart(form).send() {
+    match client
+        .post(&format!(
+            "{}{}",
+            get_pfsense_domain(),
+            PFSENSE_LOGIN_PAGE_PATH
+        ))
+        .multipart(form)
+        .send()
+    {
         Ok(response) if response.status().is_success() => {
             Ok("Logged in successfully.".to_string())
         }
@@ -89,7 +105,10 @@ pub fn schedule_backups(
 pub fn download_backup_config(
     client: Arc<reqwest::blocking::Client>,
 ) -> Result<String, String> {
-    let csrf_token = get_csrf_token(client.clone(), PFSENSE_BACKUP_PAGE_URL);
+    let csrf_token = get_csrf_token(
+        client.clone(),
+        &format!("{}{}", get_pfsense_domain(), PFSENSE_BACKUP_PAGE_PATH),
+    );
     let (encryption_key, encryption_key_metadata) = generate_encryption_key();
     let form = reqwest::blocking::multipart::Form::new()
         .text("__csrf_magic", csrf_token)
@@ -110,7 +129,11 @@ pub fn download_backup_config(
         )
         .text("decrypt_password", "");
     let mut response = client
-        .post(PFSENSE_BACKUP_PAGE_URL)
+        .post(&format!(
+            "{}{}",
+            get_pfsense_domain(),
+            PFSENSE_BACKUP_PAGE_PATH
+        ))
         .multipart(form)
         .send()
         .unwrap();
@@ -153,7 +176,10 @@ pub fn restore_backup_config(
     client: Arc<reqwest::blocking::Client>,
     filename: &str,
 ) -> Result<String, String> {
-    let csrf_token = get_csrf_token(client.clone(), PFSENSE_BACKUP_PAGE_URL);
+    let csrf_token = get_csrf_token(
+        client.clone(),
+        &format!("{}{}", get_pfsense_domain(), PFSENSE_BACKUP_PAGE_PATH),
+    );
     let encryption_key =
         retrieve_encryption_key(&format!(r"Backups\{}.metadata", filename))?;
     let form = reqwest::blocking::multipart::Form::new()
@@ -177,7 +203,15 @@ pub fn restore_backup_config(
         .text("decrypt_password", encryption_key)
         .text("restore", "Restore Configuration");
 
-    match client.post(PFSENSE_BACKUP_PAGE_URL).multipart(form).send() {
+    match client
+        .post(&format!(
+            "{}{}",
+            get_pfsense_domain(),
+            PFSENSE_BACKUP_PAGE_PATH
+        ))
+        .multipart(form)
+        .send()
+    {
         Ok(response) if response.status().is_success() => {
             Ok("Config file restored successfully.".to_string())
         }
